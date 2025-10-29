@@ -1,0 +1,21 @@
+# Deploy to Vercel - Quick Commands
+
+# Step 1: Initialize Git (if not already done)
+git init
+git add .
+git commit -m "Initial commit - GentleWash app"
+
+# Step 2: Create repository on GitHub, then connect it
+# Replace YOUR-USERNAME with your GitHub username
+git remote add origin https://github.com/YOUR-USERNAME/gentlewash.git
+git branch -M main
+git push -u origin main
+
+# Step 3: Go to vercel.com
+# - Sign in with GitHub
+# - Click "New Project"
+# - Import your gentlewash repository
+# - Add environment variables (copy from .env.local)
+# - Click "Deploy"
+
+# That's it! Your site will be live in 2-3 minutes! 🚀

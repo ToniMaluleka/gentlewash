@@ -1,0 +1,432 @@
+# GentleWash — MVP Source, Wireframes & Setup
+
+This document contains:
+1. Overview & Architecture
+2. Wireframes (visual layout for each main screen)
+3. Database structure (Firestore)
+4. Matching algorithm (pseudo-code)
+5. Full minimal source code (Next.js + Firebase)
+6. Step-by-step: run locally, test, deploy
+7. Notes on verification, payments, maps and next steps
+
+---
+
+## 1) Overview & Architecture
+
+**Goal:** Web-first PWA that connects car owners to mobile washers (GentleWash). Uber-like matching and GPS.
+
+**Tech (MVP):**
+- Frontend: Next.js (React) — single codebase, PWA-ready
+- Backend: Firebase Authentication, Firestore, Cloud Functions (optional), Storage
+- Payments: Stripe (Checkout) — recommended
+- Maps: Google Maps JS API
+
+**Why:** Fast to develop, scalable, minimal infra.
+
+---
+
+## 2) Wireframes (layout & what belongs where)
+
+Notes: Keep screens minimalist — big CTAs, clear flows.
+
+### A) Landing / Public
+- Header: logo (left), Sign Up / Login (right)
+- Hero: Tagline "Request → Pay → Done"
+- Buttons: "Request a Wash" (owner), "Become a Washer"
+
+### B) Signup (choose role)
+- Toggle: Owner / Washer
+- Fields owner: name, phone, email
+- Fields washer: name, phone, email, vehicle (optional), upload ID, upload selfie
+- CTA: Create account
+
+### C) Owner Dashboard (main)
+Top: simple header with profile / wallet
+Center: Map (full width mobile), "Request a Wash" card
+Request card steps:
+  1. Choose car (or add)
+  2. Choose service (Exterior / Interior / Both; presets)
+  3. ASAP or Schedule (datetime)
+  4. Payment button (Stripe) -> Confirm
+After confirm: searching state -> shows assigned washer ETA and photo + rating
+Bottom: Past jobs + ratings
+
+### D) Washer Dashboard
+Top: Earnings, Availability toggle (Online/Offline)
+Center: Incoming job queue (Toast style or bottom sheet)
+Each job card: distance, service type, price, pickup location (approx), Accept / Reject
+When accepted: navigation button opens Google Maps with route
+Complete job: mark complete, upload before/after photos, confirm
+
+### E) Job Flow (Uber-like)
+1. Owner requests -> system creates job doc status: REQUESTED
+2. Matching service finds washer(s) -> send push/real-time update to washer(s)
+3. Washer accepts -> job assigned, status: ASSIGNED
+4. Arrival -> status: ARRIVED
+5. In progress -> status: IN_PROGRESS
+6. Complete -> status: COMPLETED -> Owner pays (or payment already captured) -> owner leaves review
+
+---
+
+## 3) Firestore Schema (documents + collections)
+
+Collections:
+- users/{uid}
+  - role: 'owner' | 'washer' | 'admin'
+  - name, phone, email
+  - profilePhotoUrl
+  - washerProfile: { idDocUrl, selfieUrl, verified: boolean, equipment: ["bucket","microfiber"], rating, completedJobs }
+  - location: {lat, lng} (last known)
+
+- cars/{carId}
+  - ownerId, make, model, plate
+
+- jobs/{jobId}
+  - ownerId, washerId (nullable), status, createdAt, scheduledAt
+  - pickupLocation: {lat, lng}
+  - serviceType, price
+  - photos: { before:[], after:[] }
+  - rating: {score, review}
+
+- notifications/{notifId} (optional)
+- payouts/{id}
+
+Security rules: owners can create jobs; washer can update job if assigned; admin can moderate.
+
+---
+
+## 4) Matching Algorithm (first-draft — serverless friendly)
+
+Pseudocode for Cloud Function triggered on job creation (jobs collection):
+
+```
+onJobCreate(job):
+  areaRadius = 5km
+  candidates = query users where role=='washer' and verified==true and lastLocation within areaRadius
+  sort candidates by (onlineStatus desc, rating desc, distance asc)
+  for candidate in top N (3):
+    push notification to candidate (jobId)
+    wait T seconds for response
+    if candidate accepts:
+      assign job.washerId = candidate.id
+      set job.status = 'ASSIGNED'
+      break
+  if no acceptances:
+    expand search radius and repeat (or mark unassigned / notify admin)
+```
+
+For MVP you can implement matching client-side (simple) by querying nearest washers and sending requests to them via Firestore writes; Cloud Functions recommended for reliability.
+
+---
+
+## 5) Minimal Source Code (Next.js + Firebase)
+
+> Note: This is a minimal starting code to get you running locally. It includes user signup/login, role selection, request creation, and a simple matching stub.
+
+### Files (key excerpts)
+
+--- package.json
+```
+{
+  "name": "gentlewash-mvp",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "firebase": "^9.22.0",
+    "next": "13.4.4",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "swr": "1.4.0"
+  }
+}
+```
+
+--- lib/firebase.js
+```js
+import { initializeApp } from 'firebase/app'
+import { getAuth } from 'firebase/auth'
+import { getFirestore } from 'firebase/firestore'
+import { getStorage } from 'firebase/storage'
+
+const firebaseConfig = {
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+}
+
+const app = initializeApp(firebaseConfig)
+export const auth = getAuth(app)
+export const db = getFirestore(app)
+export const storage = getStorage(app)
+```
+
+--- pages/_app.js
+```jsx
+import '../styles/globals.css'
+import { useEffect } from 'react'
+import { AuthProvider } from '../src/AuthContext'
+
+export default function App({ Component, pageProps }){
+  return (
+    <AuthProvider>
+      <Component {...pageProps} />
+    </AuthProvider>
+  )
+}
+```
+
+--- src/AuthContext.js (simple)
+```jsx
+import { createContext, useContext, useEffect, useState } from 'react'
+import { onAuthStateChanged } from 'firebase/auth'
+import { auth } from '../lib/firebase'
+
+const AuthContext = createContext({ user: null })
+
+export function AuthProvider({ children }){
+  const [user, setUser] = useState(null)
+  useEffect(()=> onAuthStateChanged(auth, setUser), [])
+  return <AuthContext.Provider value={{user}}>{children}</AuthContext.Provider>
+}
+
+export const useAuth = ()=> useContext(AuthContext)
+```
+
+--- pages/index.js (Landing)
+```jsx
+import Link from 'next/link'
+export default function Home(){
+  return (
+    <div style={{padding: 20}}>
+      <h1>GentleWash</h1>
+      <p>Request → Pay → Done</p>
+      <div style={{display:'flex', gap:12}}>
+        <Link href="/request"><a><button>Request a Wash</button></a></Link>
+        <Link href="/become-washer"><a><button>Become a Washer</button></a></Link>
+      </div>
+    </div>
+  )
+}
+```
+
+--- pages/request.js (Owner create job)
+```jsx
+import { useState } from 'react'
+import { db } from '../lib/firebase'
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore'
+import dynamic from 'next/dynamic'
+
+const MapPicker = dynamic(()=> import('../src/MapPicker'), { ssr:false })
+
+export default function Request(){
+  const [service, setService] = useState('exterior')
+  const [location, setLocation] = useState(null)
+
+  async function createJob(){
+    if(!location) return alert('pick location')
+    const docRef = await addDoc(collection(db,'jobs'),{
+      serviceType: service,
+      pickupLocation: location,
+      status: 'REQUESTED',
+      createdAt: serverTimestamp(),
+    })
+    alert('Job created: '+docRef.id)
+  }
+
+  return (
+    <div style={{padding:20}}>
+      <h2>Request a Wash</h2>
+      <label>Service</label>
+      <select value={service} onChange={e=>setService(e.target.value)}>
+        <option value="exterior">Exterior</option>
+        <option value="interior">Interior</option>
+        <option value="both">Both</option>
+      </select>
+      <div style={{height:300, marginTop:12}}>
+        <MapPicker onPick={setLocation} />
+      </div>
+      <button onClick={createJob}>Confirm & Pay</button>
+    </div>
+  )
+}
+```
+
+--- src/MapPicker.js (simple browser geolocation + Google Map placeholder)
+```jsx
+import { useEffect } from 'react'
+export default function MapPicker({onPick}){
+  useEffect(()=>{
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(pos=>{
+        const {latitude:lat, longitude:lng} = pos.coords
+        onPick({lat,lng})
+      })
+    }
+  },[])
+  return <div style={{background:'#eef', height:'100%', display:'flex', alignItems:'center', justifyContent:'center'}}>Map (Google)</div>
+}
+```
+
+--- pages/become-washer.js
+```jsx
+import { useState } from 'react'
+import { auth, db, storage } from '../lib/firebase'
+import { createUserWithEmailAndPassword } from 'firebase/auth'
+import { doc, setDoc } from 'firebase/firestore'
+
+export default function BecomeWasher(){
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
+
+  async function signup(){
+    const userCred = await createUserWithEmailAndPassword(auth,email,password)
+    await setDoc(doc(db,'users', userCred.user.uid),{
+      name, email, role:'washer', verified:false, createdAt:new Date()
+    })
+    alert('Registered! Please upload ID in profile (admin will verify)')
+  }
+
+  return (
+    <div style={{padding:20}}>
+      <h2>Become a Washer</h2>
+      <input placeholder="Full name" onChange={e=>setName(e.target.value)} />
+      <input placeholder="Email" onChange={e=>setEmail(e.target.value)} />
+      <input placeholder="Password" type="password" onChange={e=>setPassword(e.target.value)} />
+      <button onClick={signup}>Sign up</button>
+    </div>
+  )
+}
+```
+
+--- README (setup & run instructions)
+```
+# GentleWash MVP
+
+## Prerequisites
+- Node.js 18+
+- Firebase project (free tier ok)
+- Google Maps API key (for maps)
+- Stripe account for payments (optional for dev)
+
+## Local setup
+1. Clone repo
+2. Run `npm install`
+3. Create `.env.local` in project root with:
+
+```
+NEXT_PUBLIC_FIREBASE_API_KEY=...
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=...
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=...
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=...
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=...
+NEXT_PUBLIC_FIREBASE_APP_ID=...
+NEXT_PUBLIC_GOOGLE_MAPS_KEY=...
+```
+
+4. Start dev server: `npm run dev` (runs on http://localhost:3000)
+
+## Firebase Setup
+1. Create Firebase project at console.firebase.google.com
+2. Enable Authentication -> Email/Password
+3. Create Firestore database (start in test mode for dev)
+4. Enable Storage
+5. Copy config to `.env.local`
+
+## Stripe
+- Create Checkout session via Cloud Function or backend; easiest: use Stripe Checkout with client session creation via Cloud Function.
+
+## Deploy
+- Vercel: connect repo, set env vars, deploy
+- Firebase Hosting: `firebase init` -> hosting + configure
+
+```
+
+---
+
+## 6) Step-by-step: Run locally, make changes, and upload (detailed)
+
+### A. Running locally
+1. Install Node.js 18+ on your machine.
+2. Create a folder and clone or paste the project files.
+3. In project root run `npm install`.
+4. Copy Firebase config and Google Maps key to `.env.local`.
+5. Run `npm run dev`.
+6. Open `http://localhost:3000` in browser.
+
+How to make changes: edit files inside `pages/` or `src/` and they hot-reload.
+
+### B. Testing Authentication
+- Create user accounts using sign up pages.
+- For washer, upload ID/selfie (we included placeholder; implement upload to Storage in profile page).
+
+### C. Running matching locally
+- When an owner creates a job, it writes a job doc in Firestore with `status:REQUESTED`.
+- For MVP matching: write a simple Cloud Function or run a local script to query nearby washers and update `washerId`.
+
+### D. Payments
+- For dev, you can skip real Stripe by marking jobs as "paid" manually.
+- For live: implement Stripe Checkout server-side (Cloud Function) to create session and redirect.
+
+### E. Deploy (Vercel)
+1. Push repo to GitHub.
+2. Create Vercel account and import the repo.
+3. Set environment variables in Vercel dashboard.
+4. Deploy — Vercel will build and host.
+
+Alternative: Firebase Hosting
+1. `npm run build`
+2. `firebase init` -> choose hosting, point to `out` or `.next` as required
+3. `firebase deploy`
+
+---
+
+## 7) Face Verification & ID checks — MVP approach
+
+Because face-matching is sensitive and costly, MVP approach:
+1. Washer uploads ID (photo of ID) + selfie
+2. Admin manually reviews and marks `verified=true` (fast, human review)
+3. For scale, integrate a 3rd-party face match API (AWS Rekognition, Microsoft Azure Face API, Face++). This requires KYC provider and policy compliance.
+
+Implement manual verification first.
+
+---
+
+## 8) Admin Panel
+
+Essential features:
+- List pending washer verifications (view ID + selfie) -> Approve / Reject
+- Search jobs and users
+- Edit user verification status, ban users, moderate reviews
+
+---
+
+## 9) Security & Privacy Notes
+- Store only necessary data. Don't store sensitive fields in plaintext.
+- Use Firestore Security Rules to restrict writes/reads.
+- Comply with local regulations for ID and KYC storage and retention.
+- Use HTTPS everywhere (Vercel / Firebase Hosting provides it).
+
+---
+
+## 10) Next steps & improvements
+- Add push notifications (Firebase Cloud Messaging)
+- Real-time ETA for washers using location streaming
+- Stripe Connect for payouts to washers
+- In-app chat
+- Insurance partner integration
+- Machine learning for dynamic pricing (later)
+
+---
+
+# That's the content for your starter repo & product plan.
+
+
+/* End of code doc */
