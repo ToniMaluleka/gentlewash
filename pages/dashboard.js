@@ -157,7 +157,7 @@ export default function Dashboard() {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1 style={{ margin: 0 }}>🚗 GentleWash</h1>
           <div style={{ display: 'flex', gap: 10 }}>
-            {user?.email === 'tmaluleka@smb.s-plane.co.za' && (
+            {user?.email === 'zidosmith.tm@gmail.com' && (
               <Link href="/admin">
                 <button style={{
                   padding: '8px 16px',

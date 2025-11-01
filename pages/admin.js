@@ -25,7 +25,7 @@ export default function AdminDashboard() {
   const [isLoading, setIsLoading] = useState(true);
 
   // Admin email - CHANGE THIS TO YOUR EMAIL
-  const ADMIN_EMAIL = 'tmaluleka@smb.s-plane.co.za'; // ⚠️ UPDATE THIS
+  const ADMIN_EMAIL = 'zidosmith.tm@gmail.com'; // ⚠️ UPDATE THIS
 
   useEffect(() => {
     if (!loading && !user) {
