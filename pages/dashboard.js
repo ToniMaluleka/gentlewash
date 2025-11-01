@@ -156,19 +156,36 @@ export default function Dashboard() {
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <h1 style={{ margin: 0 }}>🚗 GentleWash</h1>
-          <Link href="/">
-            <button style={{
-              padding: '8px 16px',
-              fontSize: 14,
-              backgroundColor: '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: 6,
-              cursor: 'pointer'
-            }}>
-              Home
-            </button>
-          </Link>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {user?.email === 'tmaluleka@smb.s-plane.co.za' && (
+              <Link href="/admin">
+                <button style={{
+                  padding: '8px 16px',
+                  fontSize: 14,
+                  backgroundColor: '#9f7aea',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 6,
+                  cursor: 'pointer'
+                }}>
+                  🛡️ Admin Panel
+                </button>
+              </Link>
+            )}
+            <Link href="/">
+              <button style={{
+                padding: '8px 16px',
+                fontSize: 14,
+                backgroundColor: '#007bff',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer'
+              }}>
+                Home
+              </button>
+            </Link>
+          </div>
         </div>
       </header>
 
